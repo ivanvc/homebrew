@@ -14,6 +14,7 @@ class Spidermonkey <Formula
 
   def install
     ENV.j1
+    ENV['CFLAGS'] = ENV['CFLAGS'].gsub(/-msse[^\s]+/, '')
     Dir.chdir "src" do
       system "make JS_DIST=#{HOMEBREW_PREFIX} JS_THREADSAFE=1 DEFINES=-DJS_C_STRINGS_ARE_UTF8 -f Makefile.ref"
       system "make JS_DIST=#{prefix} -f Makefile.ref export"
