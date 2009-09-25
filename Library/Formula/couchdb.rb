@@ -13,5 +13,9 @@ class Couchdb <Formula
     system "./configure", "--prefix=#{prefix}"
     system "make"
     system "make install"
+    system "mkdir", "-p", prefix + 'var' + 'log' + 'couchdb'
+    system "touch", prefix + 'var' + 'log' + 'couchdb' + '.gitignore'
+    system "mkdir", "-p", prefix + 'var' + 'lib' + 'couchdb'
+    system "touch", prefix + 'var' + 'lib' + 'couchdb' + '.gitignore'
   end
 end
