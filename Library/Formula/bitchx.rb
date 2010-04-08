@@ -7,11 +7,13 @@ class Bitchx <Formula
   md5 '611d2dda222f00c10140236f4c331572'
 
   def install
-    ENV.append "CFLAGS", "-DBIND_8_COMPAT"
+    %w{ CFLAGS CXXFLAGS LDFLAGS OBJCFLAGS OBJCXXFLAGS }.each do |compiler_flag|
+      ENV.remove compiler_flag, "-arch x86_64"
+      ENV.append compiler_flag, "-arch i386 -DBIND_8_COMPAT -g -I/usr/local/include"
+    end
     system "./configure", 
            "--prefix=#{prefix}",
            "--without-gtk",
-           "--with-tgetent",
            "--with-plugins"
     
     system "make install"
@@ -223,6 +225,16 @@ __END__
 
 --- configure.orig	2010-04-08 12:24:29.000000000 -0500
 +++ configure	2010-04-08 12:25:40.000000000 -0500
+@@ -3071,9 +3071,6 @@
+ fi
+ echo "$as_me:$LINENO: result: $ac_cv_lib_m_pow" >&5
+ echo "${ECHO_T}$ac_cv_lib_m_pow" >&6
+-if test $ac_cv_lib_m_pow = yes; then
+-  LIBS="-lm $LIBS"
+-fi
+ 
+ 
+ 
 @@ -12628,6 +12628,9 @@
        BSD/OS-4*)
          SHLIB_LD="$CC -shared"
@@ -410,3 +422,24 @@ __END__
  }
  #endif
  /* --- end of env.c --- */
+
+--- source/term.c.orig	2005-04-03 07:22:04.000000000 -0400
++++ source/term.c	2005-04-03 07:22:41.000000000 -0400
+@@ -92,7 +92,6 @@
+ #endif
+ 
+ extern  char    *getenv();
+-extern	char	*tparm();
+ 
+ /*
+  * The old code assumed termcap. termcap is almost always present, but on
+
+--- script/bxglobal.orig	2010-04-08 18:41:12.000000000 -0500
++++ script/bxglobal	2010-04-08 18:41:39.000000000 -0500
+@@ -8,3 +8,6 @@
+ 
+ # We should probably do some other things here like set flood protection to
+ # some reasonable defaults so no one will complain.
++
++SET DISPLAY_PC_CHARACTERS 3
++SET EIGHT_BIT_CHARACTERS ON
