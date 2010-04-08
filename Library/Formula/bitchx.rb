@@ -9,7 +9,7 @@ class Bitchx <Formula
   def install
     %w{ CFLAGS CXXFLAGS LDFLAGS OBJCFLAGS OBJCXXFLAGS }.each do |compiler_flag|
       ENV.remove compiler_flag, "-arch x86_64"
-      ENV.append compiler_flag, "-arch i386 -DBIND_8_COMPAT -g -I/usr/local/include"
+      ENV.append compiler_flag, "-arch i386 -DBIND_8_COMPAT -g"
     end
     system "./configure", 
            "--prefix=#{prefix}",
