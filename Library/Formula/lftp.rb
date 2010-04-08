@@ -1,16 +1,19 @@
-require 'brewkit'
+require 'formula'
 
 class Lftp <Formula
-  @url='http://ftp.yars.free.net/pub/source/lftp/lftp-3.7.15.tar.gz'
-  @homepage='http://lftp.yar.ru/'
-  @md5='6c43ffdb59234ff0533cfdda0c3c305c'
+  url 'http://ftp.yars.free.net/pub/source/lftp/lftp-4.0.6.tar.bz2'
+  homepage 'http://lftp.yar.ru/'
+  md5 '7cd4f6f7d3b5d9baab4e090ebced9c91'
 
   depends_on 'readline'
+  depends_on 'pkg-config'
+  depends_on 'gnutls'
 
   def install
-    ENV['CXXFLAGS'] += " -fno-exceptions -fno-rtti -fno-implement-inlines"
-    ENV['LDFLAGS'] += " -Xlinker -search_paths_first -L/usr/local/lib"
-    system "./configure", "--prefix=#{prefix}", "--disable-dependency-tracking", "--with-openssl", "--disable-shared", "--disable-nls"
+    # Bus error
+    ENV.no_optimization if MACOS_VERSION == 10.5
+
+    system "./configure", "--prefix=#{prefix}", "--disable-dependency-tracking"
     system "make install"
   end
 end

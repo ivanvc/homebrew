@@ -1,4 +1,4 @@
-require 'brewkit'
+require 'formula'
 
 class Liblastfm <Formula
   @homepage='http://github.com/mxcl/liblastfm/'
@@ -7,7 +7,7 @@ class Liblastfm <Formula
 
   depends_on 'qt'
   depends_on 'fftw'
-  depends_on 'samplerate'
+  depends_on 'libsamplerate'
 
   def install
     system "./configure --release --prefix '#{prefix}'"

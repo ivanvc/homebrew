@@ -1,43 +1,73 @@
 #!/usr/bin/ruby
 require 'global'
-require 'formula'
-require 'keg'
-require 'brew.h'
-
-show_summary_heading = false
 
 def text_for_keg_only_formula f
+  if f.keg_only? == :provided_by_osx
+    rationale = "This is because the formula is already provided by OS X."
+  elsif f.keg_only?.kind_of? String
+    rationale = "The formula provides the following rationale:\n\n#{f.keg_only?.chomp}"
+  else
+    rationale = "The formula didn't provide any rationale for this."
+  end
   <<-EOS
 #{f.name} is keg-only. This means it is not symlinked into Homebrew's
-prefix. The formula provides the following rationale:
-
-#{f.keg_only?.chomp}
+prefix. #{rationale}
 
 Generally there are no consequences of this for you, however if you build your
 own software and it requires this formula, you may want to run this command to
 link it into the Homebrew prefix:
 
-     brew link #{f.name}
-EOS
+    brew link #{f.name}
+  EOS
 end
 
+# I like this little at all, but see no alternative seeing as the formula
+# rb file has to be the running script to allow it to use __END__ and DATA
+at_exit do
+  begin
+    raise $! if $! # an exception was already thrown when parsing the formula
 
-def ENV_append key, value, separator = ' '
-  if ENV[key] and not ENV[key].empty?
-    ENV[key] += separator+value
-  else
-    ENV[key] = value
+    require 'extend/ENV'
+    require 'fileutils'
+    require 'hardware'
+    require 'keg'
+    require 'brew.h.rb'
+
+    ENV.extend(HomebrewEnvExtension)
+    ENV.setup_build_environment
+
+    install(Formula.factory($0))
+  rescue Exception => e
+    if ENV['HOMEBREW_ERROR_PIPE']
+      pipe = IO.new(ENV['HOMEBREW_ERROR_PIPE'].to_i, 'w')
+      Marshal.dump(e, pipe)
+      pipe.close
+      exit! 1
+    else
+      onoe e
+      puts e.backtrace
+      exit! 2
+    end
   end
 end
 
-
 def install f
+  show_summary_heading = false
+
   f.deps.each do |dep|
     dep = Formula.factory dep
     if dep.keg_only?
-      ENV_append 'LDFLAGS', "-L#{dep.lib}"
-      ENV_append 'CPPFLAGS', "-I#{dep.include}"
-      ENV_append 'PATH', "#{dep.bin}", ':'
+      ENV.prepend 'LDFLAGS', "-L#{dep.lib}"
+      ENV.prepend 'CPPFLAGS', "-I#{dep.include}"
+      ENV.prepend 'PATH', "#{dep.bin}", ':'
+      ENV.prepend 'PKG_CONFIG_PATH', dep.lib+'pkgconfig', ':'
+    end
+  end
+
+  if ARGV.verbose?
+    ohai "Build Environment"
+    %w[PATH CFLAGS LDFLAGS CPPFLAGS MAKEFLAGS CC CXX MACOSX_DEPLOYMENT_TARGET PKG_CONFIG_PATH].each do |env|
+      puts "#{env}: #{ENV[env]}" unless ENV[env].to_s.empty?
     end
   end
 
@@ -57,9 +87,10 @@ def install f
         f.prefix.mkpath
         beginning=Time.now
         f.install
-        %w[README ChangeLog COPYING LICENSE COPYRIGHT AUTHORS].each do |file|
+        FORMULA_META_FILES.each do |file|
           FileUtils.mv "#{file}.txt", file rescue nil
           f.prefix.install file rescue nil
+          (f.prefix+file).chmod 0644 rescue nil
         end
         build_time = Time.now-beginning
       end
@@ -78,13 +109,13 @@ def install f
   end
 
   ohai 'Finishing up' if ARGV.verbose?
-  
+
   begin
     clean f
   rescue Exception => e
     opoo "The cleaning step did not complete successfully"
     puts "Still, the installation was successful, so we will link it into your prefix"
-    ohai e, e.inspect if ARGV.debug?
+    ohai e, e.backtrace if ARGV.debug?
     show_summary_heading = true
   end
 
@@ -102,7 +133,7 @@ def install f
         show_summary_heading = true
       end
     end
-  end
+  end unless f.keg_only?
 
   if f.keg_only?
     ohai 'Caveats', text_for_keg_only_formula(f)
@@ -110,11 +141,11 @@ def install f
   else
     begin
       Keg.new(f.prefix).link
-    rescue Exception
+    rescue Exception => e
       onoe "The linking step did not complete successfully"
       puts "The package built, but is not symlinked into #{HOMEBREW_PREFIX}"
       puts "You can try again using `brew link #{f.name}'"
-      ohai e, e.inspect if ARGV.debug?
+      ohai e, e.backtrace if ARGV.debug?
       show_summary_heading = true
     end
   end
@@ -123,14 +154,4 @@ def install f
   print "#{f.prefix}: #{f.prefix.abv}"
   print ", built in #{pretty_duration build_time}" if build_time
   puts
-
-rescue Exception => e
-  #TODO propogate exception back to brew script
-  onoe e
-  puts e.backtrace
 end
-
-
-# I like this little at all, but see no alternative seeing as the formula
-# rb file has to be the running script to allow it to use __END__ and DATA
-at_exit { install(Formula.factory($0)) }

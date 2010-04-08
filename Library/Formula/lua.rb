@@ -1,26 +1,26 @@
-require 'brewkit'
+require 'formula'
 
 class Lua <Formula
-  @url='http://www.lua.org/ftp/lua-5.1.4.tar.gz'
-  @homepage='http://www.lua.org/'
-  @md5='d0870f2de55d59c1c8419f36e8fac150'
+  url 'http://www.lua.org/ftp/lua-5.1.4.tar.gz'
+  homepage 'http://www.lua.org/'
+  md5 'd0870f2de55d59c1c8419f36e8fac150'
   
   def patches
     DATA
   end
 
   def install
-    inreplace 'Makefile', '/usr/local', prefix
-    inreplace 'src/luaconf.h', '/usr/local', prefix
-    inreplace 'etc/lua.pc', '/usr/local', prefix
+    inreplace ['Makefile', 'src/luaconf.h', 'etc/lua.pc'],
+      '/usr/local', prefix
 
-    inreplace 'Makefile', 'man/man1', 'share/man/man1'
-    inreplace 'etc/lua.pc', 'man/man1', 'share/man/man1'
+    inreplace 'src/luaconf.h', '/usr/local', HOMEBREW_PREFIX
 
-    ENV["CFLAGS"] += " -DLUA_USE_LINUX"
+    ENV.append "CFLAGS", "-DLUA_USE_LINUX"
 
     system "make macosx"
     system "make install"
+    
+    (lib+"pkgconfig").install 'etc/lua.pc'
   end
 end
 

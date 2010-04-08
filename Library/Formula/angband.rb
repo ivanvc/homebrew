@@ -1,4 +1,4 @@
-require 'brewkit'
+require 'formula'
 
 class Angband <Formula
   @url='http://rephial.org/downloads/3.0/angband-3.0.9b-src.tar.gz'
@@ -6,18 +6,14 @@ class Angband <Formula
   @homepage='http://rephial.org/'
 
   def install
-    angband_libexec = libexec+"angband"
-
     system "./configure", "--prefix=#{prefix}",
                           "--enable-curses",
                           "--disable-x11",
                           "--disable-sdltest",
-                          "--with-libpath=#{angband_libexec}"
+                          "--with-libpath=#{libexec}"
     system "make"
-    # I'm not really sure what install is installing, since
-    # it doesn't seem to install anything for me. --adamv
-    # system "make install"
+    # Install manually; 'make install' doesn't work.
     bin.install "src/angband"
-    angband_libexec.install Dir['lib/*']
+    libexec.install Dir['lib/*']
   end
 end

@@ -1,4 +1,4 @@
-require 'brewkit'
+require 'formula'
 
 class Unp <Formula
   @url='http://ftp.de.debian.org/debian/pool/main/u/unp/unp_1.0.11.tar.gz'
@@ -11,7 +11,7 @@ class Unp <Formula
     bin.install %w[unp ucat]
     man1.install "debian/unp.1"
 
-    FileUtils.mv 'debian/README.debian', 'README'
+    FileUtils.mv 'debian/README.Debian', 'README'
     FileUtils.mv 'debian/copyright', 'COPYING'
     FileUtils.mv 'debian/changelog', 'ChangeLog'
   end

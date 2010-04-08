@@ -1,63 +1,56 @@
-require 'brewkit'
+require 'formula'
 
 class ErlangManuals <Formula
-  @version='5.7.2'
-  @homepage='http://www.erlang.org'
-  @url='http://www.csd.uu.se/ftp/mirror/erlang/download/otp_doc_man_R13B01.tar.gz'
-  @md5='fa8f96159bd9a88aa2fb9e4d79d7affe'
-end
-
-class ErlangHtmlDocs <Formula
-  @version='5.7.2'
-  @homepage='http://www.erlang.org'
-  @url='http://www.csd.uu.se/ftp/mirror/erlang/download/otp_doc_html_R13B01.tar.gz'
-  @md5='42cb55bbfa5dc071fd56034615072f7a'
+  url 'http://www.erlang.org/download/otp_doc_man_R13B04.tar.gz'
+  md5 '681aaef70affc64743f4e8c0675034af'
 end
 
 class Erlang <Formula
-  @version='5.7.2'
-  @homepage='http://www.erlang.org'
-  @url='http://www.csd.uu.se/ftp/mirror/erlang/download/otp_src_R13B01.tar.gz'
-  @md5='b3db581de6c13e1ec93d74e54a7b4231'
+  version 'R13B04'
+  url "http://erlang.org/download/otp_src_#{version}.tar.gz"
+  md5 'ca6da4921e438891967900aa6a084341'
+  homepage 'http://www.erlang.org'
 
-  # def patches
-  #   [
-  #     "http://pastie.org/603456.txt",
-  #     "http://pastie.org/603462.txt",
-  #     "http://svn.macports.org/repository/macports/trunk/dports/lang/erlang/files/patch-lib-erl_interface-include-ei.h.diff",
-  #     "http://svn.macports.org/repository/macports/trunk/dports/lang/erlang/files/patch-lib-erl_interface-src-connect-ei_connect.c.diff",
-  #     "http://pastie.org/603469.txt",
-  #     "http://pastie.org/603475.txt",
-  #     "http://pastie.org/603478.txt",
-  #     "http://pastie.org/603480.txt",
-  #     "http://pastie.org/603481.txt",
-  #     "http://pastie.org/603485.txt"
-  #   ]
-  # end
-
-  depends_on 'icu4c'
-  depends_on 'openssl'
+  # we can't strip the beam executables or any plugins
+  # there isn't really anything else worth stripping and it takes a really
+  # long time to run `file` over everything in lib because there is almost
+  # 4000 files (and really erlang guys! what's with that?! Most of them should
+  # be in share/erlang!)
+  skip_clean 'lib'
+  # may as well skip this too, everything is just shell scripts
+  skip_clean 'bin'
 
   def install
     ENV.deparallelize
+    ENV.gcc_4_2 # see http://github.com/mxcl/homebrew/issues/#issue/120
+
     config_flags = ["--disable-debug",
                           "--prefix=#{prefix}",
                           "--enable-kernel-poll",
                           "--enable-threads",
                           "--enable-dynamic-ssl-lib",
-                          "--enable-smp-support",
-                          "--enable-hipe"]
+                          "--enable-smp-support"]
 
-    if Hardware.is_64_bit? and MACOS_VERSION == 10.6
+    unless ARGV.include? '--disable-hipe'
+      # HIPE doesn't strike me as that reliable on OS X
+      # http://syntatic.wordpress.com/2008/06/12/macports-erlang-bus-error-due-to-mac-os-x-1053-update/
+      # http://www.erlang.org/pipermail/erlang-patches/2008-September/000293.html
+      config_flags << '--enable-hipe'
+    end
+
+    if Hardware.is_64_bit? and MACOS_VERSION >= 10.6
       config_flags << "--enable-darwin-64bit" 
-      config_flags << "--enable-m64-build"
     end
 
     system "./configure", *config_flags
+    system "touch lib/wx/SKIP" if MACOS_VERSION >= 10.6
     system "make"
     system "make install"
 
     ErlangManuals.new.brew { man.install Dir['man/*'] }
-    ErlangHtmlDocs.new.brew { doc.install Dir['*'] }
+  end
+
+  def test
+    "erl -noshell -eval 'crypto:start().' -s init stop"
   end
 end

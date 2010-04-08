@@ -1,33 +1,6 @@
-#  Copyright 2009 Max Howell and other contributors.
-#
-#  Redistribution and use in source and binary forms, with or without
-#  modification, are permitted provided that the following conditions
-#  are met:
-#
-#  1. Redistributions of source code must retain the above copyright
-#     notice, this list of conditions and the following disclaimer.
-#  2. Redistributions in binary form must reproduce the above copyright
-#     notice, this list of conditions and the following disclaimer in the
-#     documentation and/or other materials provided with the distribution.
-#
-#  THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-#  IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
-#  OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-#  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
-#  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
-#  NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-#  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-#  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-#  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
-#  THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-class ExecutionError <RuntimeError
-  def initialize cmd, args=[]
-    super "Failure while executing: #{cmd} #{args*' '}"
-  end
-end
-class BuildError <ExecutionError
-end
+require 'download_strategy'
+require 'fileutils'
+
 class FormulaUnavailableError <RuntimeError
   def initialize name
     @name = name
@@ -38,19 +11,72 @@ class FormulaUnavailableError <RuntimeError
 end
 
 
+# The Formulary is the collection of all Formulae, of course.
+class Formulary
+  # Returns all formula names as strings, with or without aliases
+  def self.names with_aliases=false
+    filenames = (HOMEBREW_REPOSITORY+'Library/Formula').children.select {|f| f.to_s =~ /\.rb$/ }
+    everything = filenames.map{|f| f.basename('.rb').to_s }
+    everything.push *Formulary.get_aliases.keys if with_aliases
+    everything.sort
+  end
+
+  def self.paths
+    Dir["#{HOMEBREW_REPOSITORY}/Library/Formula/*.rb"]
+  end
+  
+  def self.read name
+    require Formula.path(name) rescue return nil
+    klass_name = Formula.class_s(name)
+    eval(klass_name)
+  end
+  
+  def self.read_all
+  # yields once for each
+    Formulary.names.each do |name|
+      require Formula.path(name)
+      klass_name = Formula.class_s(name)
+      klass = eval(klass_name)
+      yield name, klass
+    end
+  end
+
+  # returns a map of aliases to actual names
+  # eg { 'ocaml' => 'objective-caml' }
+  def self.get_aliases
+    aliases = {}
+    Formulary.read_all do |name, klass|
+      aka = klass.aliases
+      next if aka == nil
+
+      aka.each {|item| aliases[item.to_s] = name }
+    end
+    return aliases
+  end
+  
+  def self.find_alias name
+    aliases = Formulary.get_aliases
+    return aliases[name]
+  end
+end
+
+
 # Derive and define at least @url, see Library/Formula for examples
 class Formula
+  include FileUtils
+  
   # Homebrew determines the name
   def initialize name='__UNKNOWN__'
     set_instance_variable 'url'
     set_instance_variable 'head'
+    set_instance_variable 'specs'
 
     if @head and (not @url or ARGV.flag? '--HEAD')
       @url=@head
       @version='HEAD'
     end
 
-    raise if @url.nil?
+    raise "No url provided for formula #{name}" if @url.nil?
     @name=name
     validate_variable :name
 
@@ -59,11 +85,12 @@ class Formula
     validate_variable :version if @version
     
     set_instance_variable 'homepage'
-#    raise if @homepage.nil? # not a good idea while we have eg GitManpages!
 
     CHECKSUM_TYPES.each do |type|
       set_instance_variable type
     end
+
+    @downloader=download_strategy.new url, name, version, specs
   end
 
   # if the dir is there, but it's empty we consider it not installed
@@ -83,35 +110,57 @@ class Formula
     self.class.path name
   end
 
-  attr_reader :url, :version, :homepage, :name
+  def cached_download
+    @downloader.tarball_path
+  end
+
+  attr_reader :url, :version, :homepage, :name, :specs
 
   def bin; prefix+'bin' end
   def sbin; prefix+'sbin' end
-  def doc; prefix+'share'+'doc'+name end
-  def etc; prefix+'etc' end
+  def doc; prefix+'share/doc'+name end
   def lib; prefix+'lib' end
   def libexec; prefix+'libexec' end
-  def man; prefix+'share'+'man' end
+  def man; prefix+'share/man' end
   def man1; man+'man1' end
-  def info; prefix+'share'+'info' end
+  def info; prefix+'share/info' end
   def include; prefix+'include' end
   def share; prefix+'share' end
-  def var; prefix.parent+'var' end
 
+  # generally we don't want var stuff inside the keg
+  def var; HOMEBREW_PREFIX+'var' end
+  # configuration needs to be preserved past upgrades
+  def etc; HOMEBREW_PREFIX+'etc' end
+  
   # reimplement if we don't autodetect the download strategy you require
   def download_strategy
-    case url
-    when %r[^svn://] then SubversionDownloadStrategy
-    when %r[^git://] then GitDownloadStrategy
-    when %r[^http://(.+?\.)?googlecode\.com/svn] then SubversionDownloadStrategy
-    when %r[^http://svn.apache.org/repos/] then SubversionDownloadStrategy
-    else HttpDownloadStrategy
+    if @specs
+      vcs = @specs.delete :using
+      if vcs != nil
+        # If a class is passed, assume it is a download strategy
+        return vcs if vcs.kind_of? Class
+
+        case vcs
+        when :bzr then return BazaarDownloadStrategy
+        when :curl then return CurlDownloadStrategy
+        when :cvs then return CVSDownloadStrategy
+        when :git then return GitDownloadStrategy
+        when :hg then return MercurialDownloadStrategy
+        when :svn then return SubversionDownloadStrategy
+        end
+
+        raise "Unknown strategy #{vcs} was requested."
+      end
     end
+
+    detect_download_strategy url
   end
-  # tell the user about any caveats regarding this package
+
+  # tell the user about any caveats regarding this package, return a string
   def caveats; nil end
+
   # patches are automatically applied after extracting the tarball
-  # return an array of strings, or if you need a patch level other than -p0
+  # return an array of strings, or if you need a patch level other than -p1
   # return a Hash eg.
   #   {
   #     :p0 => ['http://foo.com/patch1', 'http://foo.com/patch2'],
@@ -121,11 +170,19 @@ class Formula
   # The final option is to return DATA, then put a diff after __END__. You
   # can still return a Hash with DATA as the value for a patch level key.
   def patches; end
-  # sometimes the clean process breaks things, return true to skip anything
-  def skip_clean? path; false end
+
   # rarely, you don't want your library symlinked into the main prefix
   # see gettext.rb for an example
   def keg_only?; false end
+
+  # sometimes the clean process breaks things
+  # skip cleaning paths in a formula with a class method like this:
+  #   skip_clean [bin+"foo", lib+"bar"]
+  # redefining skip_clean? in formulas is now deprecated
+  def skip_clean? path
+    to_check = path.relative_path_from(prefix).to_s
+    self.class.skip_clean_paths.include? to_check
+  end
 
   # yields self with current working directory set to the uncompressed tarball
   def brew
@@ -158,12 +215,29 @@ class Formula
   # we could add --disable-dependency-tracking when it will work
   def std_cmake_parameters
     # The None part makes cmake use the environment's CFLAGS etc. settings
-    "-DCMAKE_INSTALL_PREFIX='#{prefix}' -DCMAKE_BUILD_TYPE=None"
+    "-DCMAKE_INSTALL_PREFIX='#{prefix}' -DCMAKE_BUILD_TYPE=None -Wno-dev"
   end
 
   def self.class_s name
-    #remove invalid characters and camelcase
-    name.capitalize.gsub(/[-_\s]([a-zA-Z0-9])/) { $1.upcase }
+    #remove invalid characters and then camelcase it
+    name.capitalize.gsub(/[-_.\s]([a-zA-Z0-9])/) { $1.upcase } \
+                   .gsub('+', 'x')
+  end
+  
+  def self.get_used_by
+    used_by = {}
+    Formulary.read_all do |name, klass|
+      deps = klass.deps
+      next if deps == nil
+
+      deps.each do |dep|
+        _deps = used_by[dep] || []
+        _deps << name unless _deps.include? name
+        used_by[dep] = _deps
+      end
+    end
+    
+    return used_by
   end
 
   def self.factory name
@@ -173,7 +247,15 @@ class Formula
       require name
       name = path.stem
     else
-      require self.path(name)
+      begin
+        require self.path(name)
+      rescue LoadError => e
+        # Couldn't find formula 'name', so look for an alias.
+        real_name = Formulary.find_alias name
+        raise e if real_name == nil
+        puts "#{name} is an alias for #{real_name}"
+        name = real_name
+      end
     end
     begin
       klass_name =self.class_s(name)
@@ -191,37 +273,48 @@ class Formula
   end
 
   def self.path name
-    HOMEBREW_PREFIX+'Library'+'Formula'+"#{name.downcase}.rb"
+    HOMEBREW_REPOSITORY+"Library/Formula/#{name.downcase}.rb"
   end
 
   def deps
     self.class.deps or []
   end
 
+  def external_deps
+    self.class.external_deps
+  end
+
 protected
   # Pretty titles the command and buffers stdout/stderr
   # Throws if there's an error
   def system cmd, *args
-    full="#{cmd} #{args*' '}".strip
-    ohai full
+    ohai "#{cmd} #{args*' '}".strip
+
     if ARGV.verbose?
       safe_system cmd, *args
     else
-      out=''
-      # TODO write a ruby extension that does a good popen :P
-      IO.popen "#{full} 2>&1" do |f|
-        until f.eof?
-          out+=f.gets
-        end
+      rd, wr = IO.pipe
+      pid = fork do
+        rd.close
+        $stdout.reopen wr
+        $stderr.reopen wr
+        exec(cmd, *args) rescue nil
+        exit! 1 # never gets here unless exec threw or failed
       end
-      unless $? == 0
-        puts "Exit code: #{$?}"
+      wr.close
+      out = ''
+      out << rd.read until rd.eof?
+      Process.wait
+      unless $?.success?
         puts out
         raise
       end
     end
-  rescue
-    raise BuildError.new(cmd, args)
+  rescue SystemCallError
+    # usually because exec could not be find the command that was requested
+    raise
+  rescue 
+    raise BuildError.new(cmd, args, $?)
   end
 
 private
@@ -251,10 +344,11 @@ private
     type ||= :md5
     supplied=instance_variable_get("@#{type}")
     type=type.to_s.upcase
-    hash=Digest.const_get(type).hexdigest(fn.read)
+    hasher = Digest.const_get(type)
+    hash = fn.incremental_hash(hasher)
 
     if supplied and not supplied.empty?
-      raise "#{type} mismatch: #{hash}" unless supplied.upcase == hash.upcase
+      raise "#{type} mismatch\nExpected: #{hash}\nArchive: #{fn}" unless supplied.upcase == hash.upcase
     else
       opoo "Cannot verify package integrity"
       puts "The formula did not provide a download checksum"
@@ -263,12 +357,15 @@ private
   end
 
   def stage
-    ds=download_strategy.new url, name, version
     HOMEBREW_CACHE.mkpath
-    dl=ds.fetch
-    verify_download_integrity dl if dl.kind_of? Pathname
+
+    downloaded_tarball = @downloader.fetch
+    if downloaded_tarball.kind_of? Pathname
+      verify_download_integrity downloaded_tarball
+    end
+  
     mktemp do
-      ds.stage
+      @downloader.stage
       yield
     end
   end
@@ -278,7 +375,7 @@ private
 
     ohai "Patching"
     if not patches.kind_of? Hash
-      # We assume -p0
+      # We assume -p1
       patch_defns = { :p1 => patches }
     else
       patch_defns = patches
@@ -335,12 +432,12 @@ private
   end
 
   def validate_variable name
-    v=eval "@#{name}"
+    v = instance_variable_get("@#{name}")
     raise "Invalid @#{name}" if v.to_s.empty? or v =~ /\s/
   end
-  
+
   def set_instance_variable(type)
-    if !instance_variable_defined?("@#{type}")
+    unless instance_variable_defined? "@#{type}"
       class_value = self.class.send(type)
       instance_variable_set("@#{type}", class_value) if class_value
     end
@@ -350,7 +447,8 @@ private
     raise 'You cannot override Formula.brew' if method == 'brew'
   end
 
-  class <<self
+  class << self
+
     def self.attr_rw(*attrs)
       attrs.each do |attr|
         class_eval %Q{
@@ -360,31 +458,59 @@ private
         }
       end
     end
+
+    attr_rw :url, :version, :homepage, :specs, :deps, :external_deps, :aliases, *CHECKSUM_TYPES
+
+    def head val=nil, specs=nil
+      if specs
+        @specs = specs
+      end
+      val.nil? ? @head : @head = val
+    end
     
-    attr_rw :url, :version, :homepage, :head, :deps, *CHECKSUM_TYPES
-    
-    def depends_on name, *args
+    def aka *args
+      @aliases ||= []
+      args.each { |item| @aliases << item.to_s }
+    end
+
+    def depends_on name
       @deps ||= []
+      @external_deps ||= {:python => [], :ruby => [], :perl => []}
 
       case name
       when String
         # noop
       when Hash
-        name = name.keys.first # indeed, we only support one mapping
+        key, value = name.shift
+        case value
+        when :python, :ruby, :perl
+          @external_deps[value] << key
+          return
+        when :optional, :recommended
+          name = key
+        end
       when Symbol
         name = name.to_s
       when Formula
-        @deps << name
-        return # we trust formula dev to not dupe their own instantiations
+        # noop
       else
         raise "Unsupported type #{name.class}"
       end
 
-      # we get duplicates because every new fork of this process repeats this
-      # step for some reason I am not sure about
-      @deps << name unless @deps.include? name
+      @deps << name
     end
-  end  
+
+    def skip_clean paths
+      @skip_clean_paths ||= []
+      [paths].flatten.each do |p|
+        @skip_clean_paths << p.to_s unless @skip_clean_paths.include? p.to_s
+      end
+    end
+    
+    def skip_clean_paths
+      @skip_clean_paths or []
+    end
+  end
 end
 
 # see ack.rb for an example usage

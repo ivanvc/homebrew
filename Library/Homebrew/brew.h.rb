@@ -1,49 +1,77 @@
-#  Copyright 2009 Max Howell and other contributors.
+FORMULA_META_FILES = %w[README README.md ChangeLog COPYING LICENSE LICENCE COPYRIGHT AUTHORS]
+PLEASE_REPORT_BUG = "#{Tty.white}Please report this bug at #{Tty.em}http://github.com/mxcl/homebrew/issues#{Tty.reset}"
+HOMEBREW_RECOMMENDED_GCC = 5577
+
+def check_for_blacklisted_formula names
+  return if ARGV.force?
+
+  names.each do |name|
+    case name
+      # bazaar don't maintain their PyPi entry properly yet
+      # when they do we'll remove our formula and use that
+#    when 'bazaar', 'bzr' then abort <<-EOS
+#Bazaar can be installed thusly:
 #
-#  Redistribution and use in source and binary forms, with or without
-#  modification, are permitted provided that the following conditions
-#  are met:
+#    brew install pip && pip install bzr==2.0.1
 #
-#  1. Redistributions of source code must retain the above copyright
-#     notice, this list of conditions and the following disclaimer.
-#  2. Redistributions in binary form must reproduce the above copyright
-#     notice, this list of conditions and the following disclaimer in the
-#     documentation and/or other materials provided with the distribution.
-#
-#  THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-#  IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
-#  OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-#  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
-#  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
-#  NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-#  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-#  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-#  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
-#  THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-def make url
+#    EOS
+    when 'mercurial', 'hg' then abort <<-EOS
+Mercurial can be install thusly:
+
+    brew install pip && pip install mercurial
+
+    EOS
+    end
+  end
+end
+
+def __make url, name
   require 'formula'
+  require 'digest'
 
-  path=Pathname.new url
-
-  /(.*?)[-_.]?#{path.version}/.match path.basename
-  raise "Couldn't parse name from #{url}" if $1.nil? or $1.empty?
-
-  path=Formula.path $1
+  path = Formula.path name
   raise "#{path} already exists" if path.exist?
+  
+  # Check if a formula aliased to this name exists.
+  already_aka = Formulary.find_alias name
+  if already_aka != nil
+    opoo "Formula #{already_aka} is aliased to #{name}."
+    puts "Please check if you are creating a duplicate."
+  end
+
+  version = Pathname.new(url).version
+  if version == nil
+    opoo "Version cannot be determined from URL."
+    puts "You'll need to add an explicit 'version' to the formula."
+  else
+    puts "Version detected as #{version}."
+  end
+
+  md5 = ''
+  if ARGV.include? "--cache" and version != nil
+    strategy = detect_download_strategy url
+    if strategy == CurlDownloadStrategy
+      d = strategy.new url, name, version, nil
+      the_tarball = d.fetch
+      md5 = the_tarball.md5
+      puts "MD5 is #{md5}"
+    else
+      puts "--cache requested, but we can only cache formulas that use Curl."
+    end
+  end
 
   template=<<-EOS
-            require 'brewkit'
+            require 'formula'
 
-            class #{Formula.class_s $1} <Formula
+            class #{Formula.class_s name} <Formula
               url '#{url}'
               homepage ''
-              md5 ''
+              md5 '#{md5}'
 
   cmake       depends_on 'cmake'
 
               def install
-  autotools     system "./configure", "--prefix=\#{prefix}", "--disable-debug", "--disable-dependency-tracking"
+  autotools     system "./configure", "--disable-debug", "--disable-dependency-tracking", "--prefix=\#{prefix}"
   cmake         system "cmake . \#{std_cmake_parameters}"
                 system "make install"
               end
@@ -88,21 +116,80 @@ def make url
   return path
 end
 
+def make url
+  path = Pathname.new url
+
+  /(.*?)[-_.]?#{path.version}/.match path.basename
+
+  unless $1.to_s.empty?
+    name = $1
+  else
+    print "Formula name [#{path.stem}]: "
+    gots = $stdin.gets.chomp
+    if gots.empty?
+      name = path.stem
+    else
+      name = gots
+    end
+  end
+
+  force_text = "If you really want to make this formula use --force."
+
+  case name.downcase
+  when /libxml/, /libxlst/, /freetype/, /libpng/, /wxwidgets/
+    raise <<-EOS
+#{name} is blacklisted for creation
+Apple distributes this library with OS X, you can find it in /usr/X11/lib.
+However not all build scripts look here, so you may need to call ENV.x11 or
+ENV.libxml2 in your formula's install function.
+
+#{force_text}
+    EOS
+  when /rubygem/
+    raise "Sorry RubyGems comes with OS X so we don't package it.\n\n#{force_text}"
+  when /wxwidgets/
+    raise <<-EOS
+#{name} is blacklisted for creation
+An older version of wxWidgets is provided by Apple with OS X, but
+a formula for wxWidgets 2.8.10 is provided:
+
+    brew install wxmac
+
+  #{force_text}
+    EOS
+  end unless ARGV.force?
+
+  __make url, name
+end
+
+def github_info name
+  formula_name = Formula.path(name).basename
+  user = ''
+  branch = ''
+
+  if system "/usr/bin/which -s git"
+    user=`git config --global github.user`.chomp
+    all_branches = `git branch 2>/dev/null`
+     /^\*\s*(.*)/.match all_branches
+    branch = ($1 || '').chomp
+  end
+  
+  user = 'mxcl' if user.empty?
+  branch = 'master' if user.empty?
+
+  return "http://github.com/#{user}/homebrew/commits/#{branch}/Library/Formula/#{formula_name}"
+end
 
 def info name
   require 'formula'
 
-  user=''
-  user=`git config --global github.user`.chomp if system "/usr/bin/which -s git"
-  user='mxcl' if user.empty?
-  # FIXME it would be nice if we didn't assume the default branch is master
-  history="http://github.com/#{user}/homebrew/commits/master/Library/Formula/#{Formula.path(name).basename}"
-
-  exec 'open', history if ARGV.flag? '--github'
+  exec 'open', github_info(name) if ARGV.flag? '--github'
 
   f=Formula.factory name
   puts "#{f.name} #{f.version}"
   puts f.homepage
+
+  puts "Depends on: #{f.deps.join(', ')}" unless f.deps.empty?
 
   if f.prefix.parent.directory?
     kids=f.prefix.parent.children
@@ -121,7 +208,8 @@ def info name
     puts
   end
 
-  puts history
+  history = github_info(name)
+  puts history if history
 
 rescue FormulaUnavailableError
   # check for DIY installation
@@ -134,6 +222,47 @@ rescue FormulaUnavailableError
   end
 end
 
+def issues_for_formula name
+  # bit basic as depends on the issue at github having the exact name of the
+  # formula in it. Which for stuff like objective-caml is unlikely. So we
+  # really should search for aliases too.
+
+  name = f.name if Formula === name
+
+  require 'open-uri'
+  require 'yaml'
+
+  issues = []
+
+  open("http://github.com/api/v2/yaml/issues/search/mxcl/homebrew/open/"+name) do |f|
+    YAML::load(f.read)['issues'].each do |issue|
+      issues << 'http://github.com/mxcl/homebrew/issues/#issue/%s' % issue['number']
+    end
+  end
+
+  issues
+rescue
+  []
+end
+
+def cleanup name
+  require 'formula'
+
+  f = Formula.factory name
+
+  if f.installed? and f.prefix.parent.directory?
+    kids = f.prefix.parent.children
+    kids.each do |keg|
+      next if f.prefix == keg
+      print "Uninstalling #{keg}..."
+      FileUtils.rm_rf keg
+      puts
+    end
+  else
+    # we can't tell which one to keep in this circumstance
+    opoo "Skipping #{name}: most recent version #{f.version} not installed"
+  end
+end
 
 def clean f
   Cleaner.new f
@@ -154,15 +283,6 @@ def clean f
       d.rmdir
     end
   end
-end
-
-
-def expand_deps ff
-  deps = []
-  ff.deps.collect do |f|
-    deps += expand_deps(Formula.factory(f))
-  end
-  deps << ff
 end
 
 
@@ -204,7 +324,7 @@ def diy
     version=ARGV.next
   else
     version=path.version
-    raise "Couldn't determine version, try --set-version" if version.nil? or version.empty?
+    raise "Couldn't determine version, try --set-version" if version.to_s.empty?
   end
   
   if ARGV.include? '--set-name'
@@ -224,25 +344,44 @@ def diy
     "-DCMAKE_INSTALL_PREFIX=#{prefix}"
   elsif File.file? 'Makefile.am'
     "--prefix=#{prefix}"
+  else
+    raise "Couldn't determine build system"
   end
 end
 
+def macports_or_fink_installed?
+  # See these issues for some history:
+  # http://github.com/mxcl/homebrew/issues/#issue/13
+  # http://github.com/mxcl/homebrew/issues/#issue/41
+  # http://github.com/mxcl/homebrew/issues/#issue/48
 
-def fix_PATH
-  bad_paths  = `/usr/bin/which -a port`.split
-  bad_paths += `/usr/bin/which -a fink`.split
-
-  # don't remove standard paths!
-  bad_paths.delete_if do |pn|
-    %w[/usr/bin /bin /usr/sbin /sbin /usr/local/bin /usr/X11/bin].include? pn or pn.empty?
+  %w[port fink].each do |ponk|
+    path = `/usr/bin/which -s #{ponk}`
+    return ponk unless path.empty?
   end
-  bad_paths += %w[/opt/local/bin /opt/local/sbin /sw/bin /sw/sbin]
 
-  paths = ENV['PATH'].split(':').reject do |p|
-    p.squeeze! '/'
-    bad_paths.find { |pn| p =~ /^#{pn}/ } and true
+  # we do the above check because macports can be relocated and fink may be
+  # able to be relocated in the future. This following check is because if
+  # fink and macports are not in the PATH but are still installed it can
+  # *still* break the build -- because some build scripts hardcode these paths:
+  %w[/sw/bin/fink /opt/local/bin/port].each do |ponk|
+    return ponk if File.exist? ponk
   end
-  ENV['PATH'] = paths*':'
+
+  # finally, sometimes people make their MacPorts or Fink read-only so they
+  # can quickly test Homebrew out, but still in theory obey the README's 
+  # advise to rename the root directory. This doesn't work, many build scripts
+  # error out when they try to read from these now unreadable directories.
+  %w[/sw /opt/local].each do |path|
+    path = Pathname.new(path)
+    return path if path.exist? and not path.readable?
+  end
+  
+  false
+end
+
+def versions_of(keg_name)
+  `/bin/ls #{HOMEBREW_CELLAR}/#{keg_name}`.collect { |version| version.strip }.reverse
 end
 
 
@@ -259,15 +398,17 @@ class PrettyListing
           (pnn.extname == '.dylib' or pnn.extname == '.pc') and not pnn.symlink?
         end
       else
-        print_dir pn
+        if pn.directory?
+          print_dir pn
+        elsif not FORMULA_META_FILES.include? pn.basename.to_s
+          puts pn
+        end
       end
     end
   end
 
 private
   def print_dir root
-    return unless root.directory?
-
     dirs = []
     remaining_root_files = []
     other = ''
@@ -299,7 +440,7 @@ private
     when 1
       puts *files
     else
-      puts "#{root} (#{files.length} #{other}files)"
+      puts "#{root}/ (#{files.length} #{other}files)"
     end
   end
 end
@@ -316,14 +457,9 @@ class Cleaner
     
     [f.bin, f.sbin, f.lib].each {|d| clean_dir d}
     
-    # you can read all of this stuff online nowadays, save the space
-    # info pages are pants, everyone agrees apart from Richard Stallman
-    # feel free to ask for build options though! http://bit.ly/Homebrew
-    (f.prefix+'share'+'doc').rmtree rescue nil
-    (f.prefix+'share'+'info').rmtree rescue nil
-    (f.prefix+'doc').rmtree rescue nil
-    (f.prefix+'docs').rmtree rescue nil
-    (f.prefix+'info').rmtree rescue nil
+    # info pages suck
+    info = f.share+'info'
+    info.rmtree if info.directory? and not f.skip_clean? info
   end
 
 private
@@ -332,22 +468,30 @@ private
     puts "strip #{path}" if ARGV.verbose?
     path.chmod 0644 # so we can strip
     unless path.stat.nlink > 1
-      `strip #{args} #{path}`
+      system "strip", *(args+path)
     else
+      path = path.to_s.gsub ' ', '\\ '
+
       # strip unlinks the file and recreates it, thus breaking hard links!
       # is this expected behaviour? patch does it too… still, this fixes it
-      tmp=`mktemp -t #{path.basename}`.strip
-      `strip #{args} -o #{tmp} #{path}`
-      `cat #{tmp} > #{path}`
-      File.unlink tmp
+      tmp = `/usr/bin/mktemp -t homebrew_strip`.chomp
+      begin
+        `/usr/bin/strip #{args} -o #{tmp} #{path}`
+        `/bin/cat #{tmp} > #{path}`
+      ensure
+        FileUtils.rm tmp
+      end
     end
   end
 
   def clean_file path
     perms=0444
-    case `file -h #{path}`
+    case `file -h '#{path}'`
     when /Mach-O dynamically linked shared library/
-      strip path, '-SxX'
+      # Stripping libraries is causing no end of trouble
+      # Lets just give up, and try to do it manually in instances where it
+      # makes sense
+      #strip path, '-SxX'
     when /Mach-O [^ ]* ?executable/
       strip path
       perms=0555
@@ -366,9 +510,45 @@ private
       elsif path.extname == '.la' and not @f.skip_clean? path
         # *.la files are stupid
         path.unlink
-      else
+      elsif not path.symlink?
         clean_file path
       end
     end
   end
+end
+
+def gcc_42_build
+  `/usr/bin/gcc-4.2 -v 2>&1` =~ /build (\d{4,})/
+  if $1
+    $1.to_i 
+  elsif system "/usr/bin/which gcc"
+    # Xcode 3.0 didn't come with gcc-4.2
+    # We can't change the above regex to use gcc because the version numbers
+    # are different and thus, not useful.
+    # FIXME I bet you 20 quid this causes a side effect — magic values tend to
+    401
+  else
+    nil
+  end
+end
+alias :gcc_build :gcc_42_build # For compatibility
+
+def gcc_40_build
+  `/usr/bin/gcc-4.0 -v 2>&1` =~ /build (\d{4,})/
+  if $1
+    $1.to_i 
+  else
+    nil
+  end
+end
+
+def llvm_build
+  if MACOS_VERSION >= 10.6
+    `/Developer/usr/bin/llvm-gcc-4.2 -v 2>&1` =~ /LLVM build (\d{4,})/  
+    $1.to_i
+  end
+end
+
+def x11_installed?
+  Pathname.new('/usr/X11/lib/libpng.dylib').exist?
 end

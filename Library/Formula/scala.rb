@@ -1,13 +1,14 @@
-require 'brewkit'
+require 'formula'
 
 class Scala <Formula
-  @homepage='http://www.gnu.org/software/wget/'
-  @url='http://www.scala-lang.org/downloads/distrib/files/scala-2.7.5.final.tgz'
-  @version='2.7.5'
-  @md5='40a62c98d13689d83920f564a0532a8d'
+  @homepage='http://www.scala-lang.org/'
+  @url='http://www.scala-lang.org/downloads/distrib/files/scala-2.7.7.final.tgz'
+  @version='2.7.7'
+  @md5='5d2294d5aab72fec869c0ba666d28b7e'
 
   def install
+    man1.install Dir['man/man1/*']
+    FileUtils.rm_f Dir["bin/*.bat"]
     prefix.install Dir['*']
-    FileUtils.mv prefix+'man', share
   end
 end

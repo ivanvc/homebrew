@@ -1,8 +1,8 @@
-require 'brewkit'
+require 'formula'
 
 class Libffi <Formula
   @url='ftp://sourceware.org/pub/libffi/libffi-3.0.8.tar.gz'
-  @homepage='http://sources.redhat.com/libffi/'
+  @homepage='http://sourceware.org/libffi/'
   @sha1='ce44d10c39d9a37479c8777e206cac0f36c48712'
 
   def patches

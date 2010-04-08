@@ -1,21 +1,30 @@
-require 'brewkit'
+require 'formula'
 
 class Couchdb <Formula
-  @url='http://apache.multihomed.net/couchdb/0.9.1/apache-couchdb-0.9.1.tar.gz'
-  @homepage='http://couchdb.apache.org/'
-  @md5='9583efae5adfb3f9043e970fef825561'
+  url 'git://github.com/apache/couchdb.git'
+  homepage='http://couchdb.apache.org/'
+  version "0.10.1"
+  @specs = {:tag => "tags/0.10.1"}
 
   depends_on 'spidermonkey'
   depends_on 'icu4c'
   depends_on 'erlang'
 
   def install
-    system "./configure", "--prefix=#{prefix}"
+    erlang = Formula.factory "erlang"
+    js = Formula.factory "spidermonkey"
+    system "./bootstrap" if File.exists? "bootstrap"
+    system "./configure", "--prefix=#{prefix}",
+                          "--localstatedir=#{var}",
+                          "--sysconfdir=#{etc}",
+                          "--with-erlang=#{erlang.lib}/erlang/usr/include",
+                          "--with-js-include=#{js.include}",
+                          "--with-js-lib=#{js.lib}"
     system "make"
     system "make install"
-    system "mkdir", "-p", prefix + 'var' + 'log' + 'couchdb'
-    system "touch", prefix + 'var' + 'log' + 'couchdb' + '.gitignore'
-    system "mkdir", "-p", prefix + 'var' + 'lib' + 'couchdb'
-    system "touch", prefix + 'var' + 'lib' + 'couchdb' + '.gitignore'
+
+    (lib+'couchdb/bin/couchjs').chmod 0755
+    (var+'lib/couchdb').mkpath
+    (var+'log/couchdb').mkpath
   end
 end
