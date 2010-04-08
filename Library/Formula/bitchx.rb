@@ -1,19 +1,16 @@
 require 'formula'
 
 class Bitchx <Formula
-  url 'http://downloads.sourceforge.net/project/bitchx/ircii-pana/ircii-pana-1.1/ircii-pana-1.1-final.tar.gz?use_mirror=superb-sea2'
+  url 'http://downloads.sourceforge.net/project/bitchx/ircii-pana/ircii-pana-1.1/ircii-pana-1.1-final.tar.gz' 
   version '1.1-final'
   homepage 'http://bitchx.org/'
   md5 '611d2dda222f00c10140236f4c331572'
-
-# depends_on 'cmake'
 
   def install
     ENV.append "CFLAGS", "-DBIND_8_COMPAT"
     system "./configure", 
            "--prefix=#{prefix}",
            "--without-gtk",
-           "--without-ssl",
            "--with-tgetent",
            "--with-plugins"
     
