@@ -5,6 +5,7 @@ class Bitchx <Formula
   version '1.1-final'
   homepage 'http://bitchx.org/'
   md5 '611d2dda222f00c10140236f4c331572'
+  depends_on 'ncursesw'
 
   def install
     %w{ CFLAGS CXXFLAGS LDFLAGS OBJCFLAGS OBJCXXFLAGS }.each do |compiler_flag|
